@@ -21,6 +21,7 @@ classdef ButterflyCatcher
         model_inertia
         model_com
         control_gains
+        butterfly_caught
     end
     
     methods
@@ -68,6 +69,7 @@ classdef ButterflyCatcher
                 this.DH_table(i,2) = this.alpha(i);
                 this.DH_table(i,3) = this.d(i);
             end
+            this.butterfly_caught = 0;
         end
         
         % Setters
@@ -158,20 +160,20 @@ classdef ButterflyCatcher
         end
 %% inverse kinematics
 
-        % calc_qd_fc
-        % calculates the desired final joint angles based on the position
-        % and orientation of the butterfly at time of catch
+        % calc_qd_pc
+        % calculates the desired joint angles for the robot to be prepared
+        % to catch the butterfly
         % param
         %   Tb_o - transform between the butterfly and the origin at time
         %   of catch
         %   qd_ic - vector of initial joint angles
         % return
-        %   qd_fc - vector of final joint angles
-        function qd_fc = calc_qd_fc(this, Tb_o, qd_ic)
-            qd_fc = zeros(6,1);
+        %   qd_pc - vector of prepared-to-catch joint angles
+        function qd_pc = calc_qd_pc(this, Tb_o, qd_ic)
+            qd_pc = zeros(6,1);
             
             % Position of the wrist center relative to the world origin
-            Pwc_o = Tb_o*[0;0;this.DH_table(6,1);1];
+            Pwc_o = Tb_o*[0;0;-this.DH_table(6,1);1];
             
             % Calculate the two possible inverse position kinematics
             % solutions of the wrist, and choose the configuration closest
@@ -179,7 +181,7 @@ classdef ButterflyCatcher
             x_w = Pwc_o(1); y_w = Pwc_o(2); z_w = Pwc_o(3);
             
             % Joint 1
-            qd_fc(1)=atan2(real(y_w),real(x_w));
+            qd_pc(1)=atan2(real(y_w),real(x_w));
             
             d1 = this.DH_table(1,3);
             a2 = this.DH_table(2,1);
@@ -195,11 +197,11 @@ classdef ButterflyCatcher
             Theta2_2=atan2(z_w-d1,sqrt(x_w^2+y_w^2))-atan2(d4*sin(Theta3_2),a2+d4*cos(Theta3_2));
 
             if(abs(qd_ic(2,1)-Theta2_1)>abs(qd_ic(2,1)-Theta2_2))
-                qd_fc(2)=Theta2_2;
-                qd_fc(3)=Theta3_2-pi/2;
+                qd_pc(2)=Theta2_2;
+                qd_pc(3)=Theta3_2-pi/2;
             else
-                qd_fc(2)=Theta2_1;
-                qd_fc(3)=Theta3_1-pi/2;
+                qd_pc(2)=Theta2_1;
+                qd_pc(3)=Theta3_1-pi/2;
             end
 
             % Theta4,5
@@ -209,11 +211,11 @@ classdef ButterflyCatcher
             S1_1=S1(1,1); S1_2=S1(2,1); S1_3=S1(3,1);
 
             if(or(S1_3==1,S1_3==-1))
-                qd_fc(5)=atan2(0,S1_3);
-                qd_fc(4)=qd_ic(4,1);
+                qd_pc(5)=atan2(0,S1_3);
+                qd_pc(4)=qd_ic(4,1);
             else
-                qd_fc(4)=atan2(-1*S1_2,-1*S1_1);
-                qd_fc(5)=acos(S1_3);
+                qd_pc(4)=atan2(-1*S1_2,-1*S1_1);
+                qd_pc(5)=acos(S1_3);
             end
             
             % Theta6
@@ -222,11 +224,26 @@ classdef ButterflyCatcher
             S2_1=S2(1,1);
             S2_2=S2(2,1);
             if(S2_2>=0)
-                qd_fc(6)=acos(S2_1); 
+                qd_pc(6)=acos(S2_1); 
             else
-                qd_fc(6)=-acos(S2_1);
+                qd_pc(6)=-acos(S2_1);
             end
-
+        end
+        
+        % return_catch_angles
+        % returns [qd_catch, qd_dot_catch, qd_ddot_catch] for each joint for when the robot
+        % is swinging its net to catch the butterfly
+        function qd_catch = return_catch_angles(~, qd_pc, tp_step, tf_step)
+            time_range = tf_step-tp_step;
+            qd_catch = zeros(6,time_range);
+            
+            angle_displacement = pi;
+            
+            angle_fraction = angle_displacement/time_range;
+            qd_catch(:,1) = qd_pc;
+            for t = 2:time_range
+                qd_catch(:,t) = qd_catch(:,t-1) + [0;0;0;0;0;angle_fraction];
+            end
         end
 
 
@@ -308,35 +325,45 @@ classdef ButterflyCatcher
             line(link(:,1),link(:,2),link(:,3),'linewidth',3)
         end
         
-        function drawButterfly(this,t)
+        function this = drawButterfly(this,t,joint_positions)
             hold on
             grid on
-            plot3(this.Tb_oArray{t}(1,4),this.Tb_oArray{t}(2,4),this.Tb_oArray{t}(3,4),':r*','markersize',15,'markerfacecolor','r');
+            b_xyz = [this.Tb_oArray{t}(1,4) this.Tb_oArray{t}(2,4) this.Tb_oArray{t}(3,4)];
+            disp(norm(b_xyz-joint_positions(6,:)));
+            if norm(b_xyz-joint_positions(6,:)) < 0.10 || this.butterfly_caught == 1
+                b_xyz = joint_positions(6,:);
+                this.butterfly_caught = 1;
+            end
+            plot3(b_xyz(1),b_xyz(2),b_xyz(3),':r*','markersize',15,'markerfacecolor','r');
             hold off
         end
         
         % drawRobot
-        function drawRobot(this)
+        function this = drawRobot(this, joint_positions)
             hold on
             grid on
-            joint_positions = this.calc_joint_positions();
             for i = 1:this.num_joints-1;
                 this.plotLink(joint_positions(i,:), joint_positions(i+1,:));
             end
+            plot3(joint_positions(6,1),joint_positions(6,2),joint_positions(6,3), ...
+                'o','markersize',18,'markerfacecolor','m');
             hold off
         end
 
         % animateMotion
         % param:
         %   dt - time to pause for in motion animation
-        function animateMotion(this, t, dt)
+        function this = animateMotion(this,t,t_done,dt,xspeed)
             % set axis limits [xmin xmax ymin ymax zmin zmax]
             axis([-2.5 2.5 -2.5 2.5 0 2.5],'manual');
-            this.drawRobot;
-            this.drawButterfly(t);
+            joint_positions = this.calc_joint_positions();
+            this = this.drawRobot(joint_positions);
+            this = this.drawButterfly(t,joint_positions);
             drawnow
-            pause(dt) % pause with a 'correct' timing
-            clf       % clear current figure window
+            pause(dt*xspeed)     % pause with a 'correct' timing
+            if t ~= t_done
+                clf                 % clear current figure window
+            end
         end
         
     end
