@@ -10,6 +10,7 @@ classdef ButterflyCatcher
         a
         alpha
         d
+        catch_threshold
     end
     
     properties (Access = private)
@@ -44,8 +45,8 @@ classdef ButterflyCatcher
         % return:
         %   this = newly constructed ButterflyCatcher
         function this = ButterflyCatcher(num_jointsP, massP, inertiaP, ...
-                comP, aP, alphaP, dP)
-            if nargin == 7
+                comP, aP, alphaP, dP, catch_thresholdP)
+            if nargin == 8
                 this.num_joints = num_jointsP;
                 this.mass = massP;
                 this.inertia = inertiaP;
@@ -53,6 +54,7 @@ classdef ButterflyCatcher
                 this.a = aP;
                 this.alpha = alphaP;
                 this.d = dP;
+                this.catch_threshold = catch_thresholdP;
             else
                 % default parameters
                 this.num_joints = 6;
@@ -62,6 +64,7 @@ classdef ButterflyCatcher
                 this.a = [0,1,0,0,0,0.25];
                 this.alpha = [pi/2,0,-pi/2,pi/2,-pi/2,0];
                 this.d = [1,0,0,1.25,0,0];
+                this.catch_threshold = 0.13;
             end
             this.DH_table = zeros(this.num_joints, 4);
             for i = 1:this.num_joints
@@ -316,11 +319,11 @@ classdef ButterflyCatcher
         end
         
 %% plotting
-        function plotLink(~,o1,o2)
+        function plotLink(~,o1,o2,color,size)
             plot3(o1(1),o1(2),o1(3),'ko',...
-                'markersize',15,'markerfacecolor','k')
+                'markersize',size,'markerfacecolor',color)
             plot3(o2(1),o2(2),o2(3),'ko',...
-                'markersize',15,'markerfacecolor','k')
+                'markersize',size,'markerfacecolor',color)
             link = [o1; o2];
             line(link(:,1),link(:,2),link(:,3),'linewidth',3)
         end
@@ -330,11 +333,13 @@ classdef ButterflyCatcher
             grid on
             b_xyz = [this.Tb_oArray{t}(1,4) this.Tb_oArray{t}(2,4) this.Tb_oArray{t}(3,4)];
             disp(norm(b_xyz-joint_positions(6,:)));
-            if norm(b_xyz-joint_positions(6,:)) < 0.10 || this.butterfly_caught == 1
+            if norm(b_xyz-joint_positions(6,:)) < this.catch_threshold || this.butterfly_caught == 1
                 b_xyz = joint_positions(6,:);
                 this.butterfly_caught = 1;
             end
             plot3(b_xyz(1),b_xyz(2),b_xyz(3),':r*','markersize',15,'markerfacecolor','r');
+            orient_vec = this.Tb_oArray{t}*[0.15;0;0;1];
+            this.plotLink(b_xyz,orient_vec(1:3).','y',7);
             hold off
         end
         
@@ -343,7 +348,7 @@ classdef ButterflyCatcher
             hold on
             grid on
             for i = 1:this.num_joints-1;
-                this.plotLink(joint_positions(i,:), joint_positions(i+1,:));
+                this.plotLink(joint_positions(i,:), joint_positions(i+1,:),'k',15);
             end
             plot3(joint_positions(6,1),joint_positions(6,2),joint_positions(6,3), ...
                 'o','markersize',18,'markerfacecolor','m');
@@ -355,12 +360,13 @@ classdef ButterflyCatcher
         %   dt - time to pause for in motion animation
         function this = animateMotion(this,t,t_done,dt,xspeed)
             % set axis limits [xmin xmax ymin ymax zmin zmax]
-            axis([-2.5 2.5 -2.5 2.5 0 2.5],'manual');
+            axis([0 3 0 3 0 3],'manual');
             joint_positions = this.calc_joint_positions();
             this = this.drawRobot(joint_positions);
             this = this.drawButterfly(t,joint_positions);
+            view(55,20);
             drawnow
-            pause(dt*xspeed)     % pause with a 'correct' timing
+            pause(dt/xspeed)     % pause with a 'correct' timing
             if t ~= t_done
                 clf                 % clear current figure window
             end
